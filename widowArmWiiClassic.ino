@@ -1,5 +1,5 @@
 /***********************************************************************************
- *  }--\     InterbotiX Robotic Arm            /--{
+ *  }--\     WidowX    Robotic Arm            /--{
  *      |       Playback Code                 |
  *   __/                                       \__
  *  |__|                                       |__|
@@ -11,9 +11,8 @@
  *
  *
  *  WIRING
- *
- *    Digital Inputs
- *      Digital 2 - Button 1
+ *  DOCUMENT WIRING FOR CONTROLLER AND LCD
+ *    
  *
  *=============================================================================
  * Based upon Kurt's PX Reactor arm code.
@@ -32,27 +31,8 @@
 // Define Options
 //=============================================================================
 
-#define PINCHER 1
-#define REACTOR 2
 #define WIDOWX 3
-
-//uncomment one of the following lines depending on which arm you want to use
-//#define ARMTYPE PINCHER
-//#define ARMTYPE REACTOR
 #define ARMTYPE WIDOWX
-
-#if !defined(ARMTYPE) 
-   #error YOU HAVE TO SELECT THE ARM YOU ARE USING! Uncomment the correct line above for your arm
-#endif
-
-//set USE_BUTTON to FALSE if you do not have a button attached to the ArbotiX-M
-#define USE_BUTTON true
-
-//set BUTTON TRUE to HIGH for a button with built in pullup resistor like the RobotGeek Pushbutton.
-//set BUTTON TRUE to LOW for a simple 2-pin pushbutton.
-#define BUTTON_TRUE HIGH
-#define BUTTON1_PIN 2
-
 
 #define SOUND_PIN    1      // Tell system we have added speaker to IO pin 1
 #define MAX_SERVO_DELTA_PERSEC 512
@@ -68,19 +48,13 @@
 
 #include <Wire.h>       //include the Wire/I2C Library
 #include <WiiClassy.h>  //include the WiiClassy Libary
-// include the RobotGeekLCD library
-#include <RobotGeekLCD.h>
-
-// create a robotgeekLCD object named 'lcd'
-RobotGeekLCD lcd;
-
-WiiClassy classy = WiiClassy(); //start an instance of the WiiClassy Library
+#include <RobotGeekLCD.h> // include the RobotGeekLCD library
 
 
-//input control file - local
+//kinematics / math files
 #include "Kinematics.h"
 
-//armSequence
+//armSequence file that holds poses
 #include "armSequence.h"
 
 
@@ -88,20 +62,66 @@ WiiClassy classy = WiiClassy(); //start an instance of the WiiClassy Library
 //=============================================================================
 // Global Objects
 //=============================================================================
-BioloidController bioloid = BioloidController(1000000);
+BioloidController bioloid = BioloidController(1000000); //start bioloid controller at 1mbps
+RobotGeekLCD lcd;// create a robotgeekLCD object named 'lcd'
+WiiClassy classy = WiiClassy(); //start an instance of the WiiClassy Library
 
-//variables to hold the current status of the button
-int buttonState1;         
 
-volatile long lastInterruptChange;
+
+ //last read values of analog sensors (Native values, 0-WII_JOYSTICK_MAX)
+int joyXVal = 0;     //present value of the base rotation knob (analog 0)
+int joyYVal = 0; //present value of the shoulder joystick (analog 1)
+int joyZVal = 0;    //present value of the elbow joystick (analog 2)
+int joyGAVal = 0;    //present value of the wrist joystick (analog 3)
+int joyGripperVal = 0;  //present value of the gripper rotation knob (analog 4)
+//last calculated values of analog sensors (Mapped values)
+//knob values (base and gripper) will be mapped directly to the servo limits
+//joystick values (shoulder, elbow and wrist) will be mapped from -spd to spd, to faciliate incremental control
+float joyXMapped = 0;      //base knob value, mapped from 1-WII_JOYSTICK_MAX to BASE_MIN-BASE_MAX
+float joyYMapped = 0;  //shoulder joystick value, mapped from 1-WII_JOYSTICK_MAX to -spd to spd
+float joyZMapped = 0;     //elbow joystick value, mapped from 1-WII_JOYSTICK_MAX to -spd to spd
+float joyGAMapped = 0;     //wrist joystick value, mapped from 1-WII_JOYSTICK_MAX to -spd to spd
+float joyGripperMapped = 0;   //gripper knob  value, mapped from 1-WII_JOYSTICK_MAX to GRIPPER_MIN-GRIPPER_MAX
+
+
+
+float spd = 1.00;  //speed modififer, increase this to increase the speed of the movement
+float spdMod = .1;
+float maxSpd = 5;
+float minSpd = .2;
+unsigned long lastArmSpeedUpdate;
+
+int gripSpd = 10;
+int gripSpdMod = 5;
+int maxGripSpd = 100;
+int minGripSpd = 1;
+unsigned long lastGripperSpeedUpdate;
+
+int speedUpdateInterval = 100; //10hz
+
+bool lastLButtonState;
+bool lastRButtonState;
+
+
+int delayTime = 5; //milliseocnds to delay in each processAnalog function - reduce this to get full speed from the arm
+
+     
+ #define WII_JOYSTICK_MAX 63
+  
+  //generic deadband limits - not all joystics will center at 512, so these limits remove 'drift' from joysticks that are off-center.
+  #define DEADBANDLOW 30   //decrease this value if drift occurs, increase it to increase sensitivity around the center position
+  #define DEADBANDHIGH 34  //increase this value if drift occurs, decrease it to increase sensitivity around the center position
+
+   int leftStep = 0;
+   int rightStep = 0;
+   int middleStep = 0;
+   int cornerStep = 0;
 
 //===================================================================================================
 // Setup 
 //====================================================================================================
 void setup() 
 {
-
-  
 
   delay(100);
   classy.init();  //start classy library
@@ -110,35 +130,28 @@ void setup()
 
 
   
-  lcd.init(4,20);
+  lcd.init(4,20); //initialize library for 4x20 display
   lcd.clear();
   // Print a message to the LCD.
   lcd.print("Widow Arm Startup....");
 
   delay(1000);
 
-  int servoReturnList[CNT_SERVOS];
-  int numberOfFoundServos =   dxlScanServos(CNT_SERVOS, servoReturnList);
+  int servoReturnList[CNT_SERVOS];    //this will hold the error byte for each servo. -1 means no servo. 0 means everything is fine. ANything else is an error
+  int numberOfFoundServos =   dxlScanServos(CNT_SERVOS, servoReturnList); //get the number of servos connected and fill the servoReturnList with data
 
   
-
-
-  
-
   lcd.setCursor(0,1);//set cursor to  column 0 row 1
-    
+  
+  //CNT_SERVOS is the numebr of servos in the arm - if we found them all, display a message and display the error bytes
   if(CNT_SERVOS == numberOfFoundServos )
   {  
     lcd.print("All ");
     lcd.print(numberOfFoundServos);
     lcd.print(" servos found");
 
-    
-    lcd.setCursor(0,2);//set cursor to  column 0 row 2
-    
-    //lcd.print("Servo Response:");
-    
     lcd.setCursor(0,3);//set cursor to  column 0 row 3
+    //loop through each servo to show the error byte
     for(int i = 0; i < CNT_SERVOS; i++)
     {
       
@@ -152,11 +165,13 @@ void setup()
     }
     
   }
+  //if we didn't find all the servos, display an error message and show error bytes
   else
   {
     
     lcd.print("Servos missing! ");
     lcd.setCursor(0,3);//set cursor to  column 0 row 3
+    //loop through each servo to show the error byte
     for(int i = 0; i < CNT_SERVOS; i++)
     {
       
@@ -204,27 +219,20 @@ void setup()
   ax12SetRegister(SID_GRIP, AX_CW_COMPLIANCE_SLOPE, 128);
   ax12SetRegister(SID_GRIP, AX_CCW_COMPLIANCE_SLOPE, 128);
 
-
-
-  
-
-
   //startup sound
   MSound(3, 60, 2000, 80, 2250, 100, 2500);
-
-  
-  //playSequenceLeftPartOne();
 
   
   lcd.setCursor(0,0);
   lcd.print("Press A to Start    ");
 
-    Serial.println(" You can now push buttons on the wii controller");
+  Serial.println(" You can now push buttons on the wii controller");
   delay(1000);
-  //classy.aPressed = false;
+
 
   classy.aPressed = false; // there seems to be a bug in the library that sets some values to true on first statup, manually set it to false 
 
+  //loop while the button is not pressed - this stops the program from moving until the button is pressed
   while(classy.aPressed == false)
   {
     classy.update();  //read data from the classic controller
@@ -233,51 +241,65 @@ void setup()
   }
 
 
-  MoveArmToHome();  //we were able to 
+  MoveArmToHome();  //move arm to home position
   g_fArmActive = true;
-  //startup sound
+  //startup sound x 2
   MSound(6, 100, 2000, 120, 2250, 140, 2500, 160, 2000, 180, 2250, 200, 2500);
   
-
   
   lcd.setCursor(0,0);
   lcd.print("Arm Running         ");
 
 }//end setup
 
+
+
+//===================================================================================================
+// loop: Our main Loop!
+//===================================================================================================
+void loop() 
+{
+  
+  heartBeat();//run the heartbeat to update the display
+  updateControls();//update the controls from the wii controller
+
+  
+  //run the interpolation engine to actually move the servos.
+  if (bioloid.interpolating > 0) 
+  {
+    bioloid.interpolateStep();
+  }
+} //end Main
+
+
+
+
 //update the display incase of program crash. Check a last update time so that the screen is only updated periodicly.
-//also update postions
+//also update postions on the LCD
 void heartBeat()
 {
   static long lastPrintTimeCount; // static so that this variable persists through calls
   static long lastPrintTimeCoord; // static so that this variable persists through calls
   static long count; 
-  static long coordPrint;
+  static long coordPrint;//which coordinate was last printed
   
-
-
-
-
+  //this block will update the heartbeat number abotu every second
   if(millis() - lastPrintTimeCount > 1000)
   {
 
     lcd.setCursor(16,0);
     lcd.print(count++);
-
-    
-   
-  
-
-  
+ 
     lastPrintTimeCount = millis();
   }
 
   
 
-  if(millis() - lastPrintTimeCoord > 200)
+  //this block will update a signel coordinate at an odd interval (346) as to not 'collide' with the heartbear number often
+  if(millis() - lastPrintTimeCoord > 346)
   {
 
-
+    //print a single coordiantee 
     switch(coordPrint){
       case 0:
         lcd.setCursor(0,1);
@@ -326,7 +348,7 @@ void heartBeat()
         break;
         
     }
-
+    //update the next coordiante to print
   
     coordPrint = coordPrint + 1;
     if (coordPrint > 5)
@@ -343,43 +365,7 @@ void heartBeat()
 }
 
 
- //last read values of analog sensors (Native values, 0-WII_JOYSTICK_MAX)
-int joyXVal = 0;     //present value of the base rotation knob (analog 0)
-int joyYVal = 0; //present value of the shoulder joystick (analog 1)
-int joyZVal = 0;    //present value of the elbow joystick (analog 2)
-int joyGAVal = 0;    //present value of the wrist joystick (analog 3)
-int joyGripperVal = 0;  //present value of the gripper rotation knob (analog 4)
-//last calculated values of analog sensors (Mapped values)
-//knob values (base and gripper) will be mapped directly to the servo limits
-//joystick values (shoulder, elbow and wrist) will be mapped from -spd to spd, to faciliate incremental control
-float joyXMapped = 0;      //base knob value, mapped from 1-WII_JOYSTICK_MAX to BASE_MIN-BASE_MAX
-float joyYMapped = 0;  //shoulder joystick value, mapped from 1-WII_JOYSTICK_MAX to -spd to spd
-float joyZMapped = 0;     //elbow joystick value, mapped from 1-WII_JOYSTICK_MAX to -spd to spd
-float joyGAMapped = 0;     //wrist joystick value, mapped from 1-WII_JOYSTICK_MAX to -spd to spd
-float joyGripperMapped = 0;   //gripper knob  value, mapped from 1-WII_JOYSTICK_MAX to GRIPPER_MIN-GRIPPER_MAX
-
-
-
-  float spd = 1.00;  //speed modififer, increase this to increase the speed of the movement
-  float spdMod = .1;
-  float maxSpd = 5;
-  float minSpd = .2;
-  unsigned long lastArmSpeedUpdate;
-  
-  int gripSpd = 10;
-  int gripSpdMod = 5;
-  int maxGripSpd = 100;
-  int minGripSpd = 1;
-  unsigned long lastGripperSpeedUpdate;
-  
-  int speedUpdateInterval = 100; //10hz
-  
-  bool lastLButtonState;
-  bool lastRButtonState;
-
-
-  int delayTime = 5; //milliseocnds to delay in each processAnalog function - reduce this to get full speed from the arm
-  
+//float version of map() to convert data from one range to another
   float mapfloat(float x, float in_min, float in_max, float out_min, float out_max)
   {
     return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
@@ -387,7 +373,7 @@ float joyGripperMapped = 0;   //gripper knob  value, mapped from 1-WII_JOYSTICK_
 
 
 
-
+//read the wii classic controller joysticks
 void readClassicJoysticks()
 {  
   
@@ -400,52 +386,10 @@ void readClassicJoysticks()
    joyGAVal = 2 * (classy.rightStickX + 1);                 //read standard right stick data (0-31), add one then double it to get to 6-bit range (0-64)
    joyGripperVal = 2 * (classy.rightShoulderPressure + 1);  //read standard shoulder data (0-31),add one then double it to get to 6-bit range (0-64)
    delay(delayTime);  //slow down the readings - remove
-
-
-   
-
-     
 }
-//
-//void playSequenceMiddlePartOne()
-//{
-//
-//}
-//
-//void playSequenceMiddlePartTwo()
-//{
-//
-//}
-//
-//void playSequenceCornerPartOne()
-//{
-//
-//}
-//
-//void playSequenceCornerPartTwo()
-//
-//void playSequenceRightPartOne()
-//
-//void playSequenceRightPartTwo()
-//
-//void ()
-//
-//void ()
-//
 
 
-     
- #define WII_JOYSTICK_MAX 63
-  
-  //generic deadband limits - not all joystics will center at 512, so these limits remove 'drift' from joysticks that are off-center.
-  #define DEADBANDLOW 30   //decrease this value if drift occurs, increase it to increase sensitivity around the center position
-  #define DEADBANDHIGH 34  //increase this value if drift occurs, decrease it to increase sensitivity around the center position
-
-   int leftStep = 0;
-   int rightStep = 0;
-   int middleStep = 0;
-   int cornerStep = 0;
-  
+//process double taps to move sequences
 void processSequences()
 {
 
@@ -454,7 +398,6 @@ void processSequences()
   static bool lastMiddlePressed = false;
   static bool lastCornerPressed = false;
 
-  
 
   if(classy.leftDPressed )
   {
@@ -487,10 +430,6 @@ void processSequences()
   {
     lastLeftPressed = false;
   }
-
-
-
-
 
 
 
@@ -600,7 +539,7 @@ void processSequences()
   
 }
 
-
+//tie together all the wii classic work
 void updateControls()
 {
     static bool lastYPressed = false;
@@ -608,9 +547,6 @@ void updateControls()
     readClassicJoysticks();
 
     processSequences();
-
-
-  
 
     if(classy.yPressed )
     {
@@ -780,57 +716,6 @@ void updateControls()
   
 }
 
-
-
-//===================================================================================================
-// loop: Our main Loop!
-//===================================================================================================
-void loop() 
-{
-  
-  heartBeat();
-
-
-    
-
-    updateControls();
-
-  
-
-
-    
-//  
-//  if (classy.aPressed == true) 
-//  {
-//    Serial.println("ClassyA");
-//    playSequence();
-//  }
-//  
-// 
-//  if (classy.leftDPressed == true) {
-//    playSequenceLeftPartOne();
-//  }
-//  if (classy.xPressed == true) {
-//    playSequenceLeftPartTwo();
-//  }
-//  
-//  
-//  if (classy.rightDPressed == true) {
-//    playSequenceRightPartOne();
-//  }
-//  
-//  if (classy.yPressed == true) {
-//    playSequenceRightPartTwo();
-//  }
-//  
-  
-  
-  
-  if (bioloid.interpolating > 0) 
-  {
-    bioloid.interpolateStep();
-  }
-} //end Main
 
 
 
