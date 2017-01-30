@@ -54,7 +54,7 @@
 #define BUTTON1_PIN 2
 
 
-#define SOUND_PIN    7      // Tell system we have added speaker to IO pin 1
+#define SOUND_PIN    1      // Tell system we have added speaker to IO pin 1
 #define MAX_SERVO_DELTA_PERSEC 512
 //#define DEBUG             // Enable Debug mode via serial
 
@@ -68,7 +68,11 @@
 
 #include <Wire.h>       //include the Wire/I2C Library
 #include <WiiClassy.h>  //include the WiiClassy Libary
+// include the RobotGeekLCD library
+#include <RobotGeekLCD.h>
 
+// create a robotgeekLCD object named 'lcd'
+RobotGeekLCD lcd;
 
 WiiClassy classy = WiiClassy(); //start an instance of the WiiClassy Library
 
@@ -94,31 +98,72 @@ volatile long lastInterruptChange;
 //===================================================================================================
 // Setup 
 //====================================================================================================
-void setup() {
+void setup() 
+{
+  lcd.init(4,20);
+  // Print a message to the LCD.
+  lcd.print("Widow Arm Startup....");
 
-  tone(1, 800);
-  delay(500);
-  noTone(1);
+  int servoReturnList[CNT_SERVOS];
+  int numberOfFoundServos =   dxlScanServos(CNT_SERVOS, servoReturnList);
+
   
-  //If USE_BUTTON is TRUE then set up the button pin
-  if(USE_BUTTON == true)
-  {
-    //attach falling interupt on the only avaialble interrupt pin, pin 2
+
+
+  
+
+  lcd.setCursor(0,1);//set cursor to  column 0 row 1
+    
+  if(CNT_SERVOS == numberOfFoundServos )
+  {  
+    lcd.print("All ");
+    lcd.print(numberOfFoundServos);
+    lcd.print(" servos found");
 
     
-    //define BUTTON1 as an input
-    pinMode(BUTTON1_PIN, INPUT);    
+    lcd.setCursor(0,2);//set cursor to  column 0 row 2
     
-    //if BUTTON_TRUE is defined as LOW, then a normal switch has been attached and an internal pullup resistor needs to be applied
-    if(BUTTON_TRUE == LOW)
-    { 
-      digitalWrite(BUTTON1_PIN,HIGH);  //pullup resitor on BUTTON1 pun
+    //lcd.print("Servo Response:");
+    
+    lcd.setCursor(0,3);//set cursor to  column 0 row 3
+    for(int i = 0; i < CNT_SERVOS; i++)
+    {
+      
+      lcd.setCursor(i*3,2);//set cursor for each number
+      lcd.print(i + 1);
+
+      
+      lcd.setCursor(i*3,3);//set cursor for each number
+      lcd.print("");
+      lcd.print(servoReturnList[i]);
+    }
+    
+  }
+  else
+  {
+    
+    lcd.print("Servos missing! ");
+    lcd.print(numberOfFoundServos);
+    lcd.print(" servos found");
+
+    
+     //number of notes, duration, frequency, duration, freuency, etc)
+     MSound(3, 100, 800, 0, 600, 500, 600);
+  
+    while(1==1)
+    {
+      
     }
   }
-  
+
+
+
+
+
   //initialize the Serial Port
   Serial.begin(9600);  
-  
+
+  //send message to serial port
   Serial.println("Interbotix Robot Arm Online.");
 
   // Next initialize the Bioloid
@@ -131,8 +176,6 @@ void setup() {
   // Start off to put arm to sleep...
   PutArmToSleep();
   
-  //startup sound
-  MSound(3, 60, 2000, 80, 2250, 100, 2500);
 
   //set Gripper Compliance so it doesn't tear itself apart
   ax12SetRegister(SID_GRIP, AX_CW_COMPLIANCE_SLOPE, 128);
@@ -147,15 +190,39 @@ void setup() {
 
   Serial.println(" You can now push buttons on the wii controller");
   delay(1000);
-  classy.aPressed = false;
+  //classy.aPressed = false;
   
-  tone(1, 1000);
-  delay(500);
-  tone(1, 1500);
-  delay(500);
-  noTone(1);
-  playSequenceLeftPartOne();
+
+
+  //startup sound
+  MSound(3, 60, 2000, 80, 2250, 100, 2500);
+
   
+  //playSequenceLeftPartOne();
+
+  
+  lcd.setCursor(0,0);
+  lcd.print("Press A to Start    ");
+
+  classy.aPressed = false; // there seems to be a bug in the library that sets some values to true on first statup, manually set it to false 
+
+  while(classy.aPressed == false)
+  {
+    classy.update();  //read data from the classic controller
+
+  }
+
+
+  
+  //startup sound
+  MSound(6, 100, 2000, 120, 2250, 140, 2500, 160, 2000, 180, 2250, 200, 2500);
+
+
+  
+  
+  lcd.setCursor(0,0);
+  lcd.print("Arm Started         ");
+
 }//end setup
 
 
@@ -166,30 +233,55 @@ void loop()
 {
 
     classy.update();  //read data from the classic controller
+
+
+    
+  lcd.setCursor(0,0);
+  lcd.print("B:");
+  lcd.print(g_sBase);
+
+  lcd.print("Y:");
+  lcd.print(g_sIKY);
+
+  lcd.print("Z:");
+  lcd.print(g_sIKZ);
+  lcd.print("WA:");
+  lcd.print(g_sIKGA);
+
+  lcd.print("WR:");
+  lcd.print(g_sWristRot);
+
+
+  lcd.print("GR:");
+  lcd.print(g_sGrip);
   
-  if (classy.aPressed == true) 
-  {
-    Serial.println("ClassyA");
-    playSequence();
-  }
-  
- 
-  if (classy.leftDPressed == true) {
-    playSequenceLeftPartOne();
-  }
-  if (classy.xPressed == true) {
-    playSequenceLeftPartTwo();
-  }
-  
-  
-  if (classy.rightDPressed == true) {
-    playSequenceRightPartOne();
-  }
-  
-  if (classy.yPressed == true) {
-    playSequenceRightPartTwo();
-  }
-  
+
+
+    
+//  
+//  if (classy.aPressed == true) 
+//  {
+//    Serial.println("ClassyA");
+//    playSequence();
+//  }
+//  
+// 
+//  if (classy.leftDPressed == true) {
+//    playSequenceLeftPartOne();
+//  }
+//  if (classy.xPressed == true) {
+//    playSequenceLeftPartTwo();
+//  }
+//  
+//  
+//  if (classy.rightDPressed == true) {
+//    playSequenceRightPartOne();
+//  }
+//  
+//  if (classy.yPressed == true) {
+//    playSequenceRightPartTwo();
+//  }
+//  
   
   
   
