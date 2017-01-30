@@ -20,12 +20,11 @@ enum {
 
 #define IK_FUDGE            5     // How much a fudge between warning and error
 
-
 //=============================================================================
 // Global Variables...
 //=============================================================================
 boolean         g_fArmActive = false;   // Is the arm logically on?
-byte            g_bIKMode = IKM_IK3D_CARTESIAN;   // Which mode of operation are we in...
+byte            g_bIKMode = IKM_CYLINDRICAL;   // Which mode of operation are we in...
 uint8_t         g_bIKStatus = IKS_SUCCESS;   // Status of last call to DoArmIK;
 boolean         g_fServosFree = true;
 
@@ -289,15 +288,50 @@ void MoveArmTo(int sBase, int sShoulder, int sElbow, int sWrist, int sWristRot, 
 // MoveArmToHome
 //===================================================================================================
 void MoveArmToHome(void) {
+    if(g_bIKMode == IKM_CYLINDRICAL)
+    {
+      
+    
 //  if (g_bIKMode != IKM_BACKHOE) {
-    g_bIKStatus = doArmIK(true, 0, (2*ElbowLength)/3+WristLength, BaseHeight+(2*ShoulderLength)/3, 0);
-    MoveArmTo(sBase, sShoulder, sElbow, sWrist, 512, 256, 2000, true);
+
+    g_sIKY = (2*ElbowLength)/3+WristLength;
+    g_sIKZ = BaseHeight+(2*ShoulderLength)/3;
+    g_sIKGA = 0;
+
+    sBase = BASE_N;
+    sWristRot = WROT_N;
+    sGrip = GRIP_N;
+    
+    
+    
+    g_bIKStatus = doArmIK(true, 0, g_sIKY,g_sIKZ ,g_sIKGA);
+    
+
+    
+    MoveArmTo(sBase, sShoulder, sElbow, sWrist, sWristRot, sGrip, 2000, true);
      g_fArmActive = false;
 //  }
 //  else {
 //    g_bIKStatus = IKS_SUCCESS;  // assume sucess soe we will continue to move...
 //    MoveArmTo(2048, 2048, 2048, 2048, 512, 256, 2000, true);
 //  }
+    }
+
+
+    else if(g_bIKMode == IKM_CYLINDRICAL_90)
+    {
+      g_sIKY = 150;
+    g_sIKZ = 60;
+    g_sIKGA = -90;
+
+    sBase = BASE_N;
+    sWristRot = WROT_N;
+    sGrip = GRIP_N;
+    
+          g_bIKStatus = doArmIK(true, 0, g_sIKY, g_sIKZ, g_sIKGA);
+           MoveArmTo(sBase, sShoulder, sElbow, sWrist, sWristRot, sGrip, 2000, true);
+           g_fArmActive = false;
+    }
 }
 
 //===================================================================================================
@@ -345,6 +379,16 @@ void PutArmToSleep(void) {
 
 
 
+
+void EmergencyStop(void) {
+  g_fArmActive = false;
+
+  // And Relax all of the servos...
+  for(uint8_t i=1; i <= CNT_SERVOS; i++) {
+    Relax(i);
+  }
+  g_fServosFree = true;
+}
 
 
 
